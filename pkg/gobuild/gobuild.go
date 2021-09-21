@@ -34,7 +34,7 @@ func Remove(path string) {
 }
 
 // optflags generates default build flags to turn off optimization and inlining.
-func optflags(args []string) []string {
+func optflags(args []string, gcflags string) []string {
 	// after go1.9 building with -gcflags='-N -l' and -a simultaneously works.
 	// after go1.10 specifying -a is unnecessary because of the new caching strategy,
 	// but we should pass -gcflags=all=-N -l to have it applied to all packages
@@ -43,11 +43,11 @@ func optflags(args []string) []string {
 	ver, _ := goversion.Installed()
 	switch {
 	case ver.Major < 0 || ver.AfterOrEqual(goversion.GoVersion{Major: 1, Minor: 10, Rev: -1}):
-		args = append(args, "-gcflags", "all=-N -l")
+		args = append(args, "-gcflags", "all=-N -l "+gcflags)
 	case ver.AfterOrEqual(goversion.GoVersion{Major: 1, Minor: 9, Rev: -1}):
-		args = append(args, "-gcflags", "-N -l", "-a")
+		args = append(args, "-gcflags", "-N -l"+gcflags, "-a")
 	default:
-		args = append(args, "-gcflags", "-N -l")
+		args = append(args, "-gcflags", "-N -l"+gcflags)
 	}
 	return args
 }
@@ -85,12 +85,31 @@ func goBuildArgs(debugname string, pkgs []string, buildflags string, isTest bool
 	if isTest {
 		args = append([]string{"-c"}, args...)
 	}
-	args = optflags(args)
+	splitedBuildFlags := config.SplitQuotedFields(buildflags, '\'')
+	splitedBuildFlags, gcflags := removeGcflags(splitedBuildFlags)
+	args = optflags(args, gcflags)
 	if buildflags != "" {
-		args = append(args, config.SplitQuotedFields(buildflags, '\'')...)
+		args = append(args, splitedBuildFlags...)
 	}
 	args = append(args, pkgs...)
 	return args
+}
+
+func removeGcflags(buildFlags []string) ([]string, string) {
+	gcflags := ""
+	for i, flag := range buildFlags {
+		if flag == "-gcflags" {
+			gcflags = buildFlags[i+1]
+			buildFlags = append(buildFlags[:i], buildFlags[i+2:]...)
+			break
+		}
+		if strings.HasPrefix(flag, "-gcflags=") {
+			gcflags = flag[len("-gcflags="):]
+			buildFlags = append(buildFlags[:i], buildFlags[i+1:]...)
+			break
+		}
+	}
+	return buildFlags, gcflags
 }
 
 func gocommandRun(command string, args ...string) error {
